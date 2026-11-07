@@ -4,23 +4,33 @@ import json
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-CHANNEL_COUNT = 3
-LIGHT_NAME = "VirtualLight-01 RGB PAR"
 
-BG = "#202020"
-PANEL = "#2B2B2B"
-ENTRY = "#353535"
-BUTTON = "#404040"
-FG = "#FFFFFF"
-CONNECTED_COLOR = "#00FF66"
-DISCONNECTED_COLOR = "#FF5555"
+class VirtualLightBase:
 
-class VirtualLightApp:
+    LIGHT_NAME = "Virtual Light"
+    CHANNEL_COUNT = 1
+
+    BG = "#202020"
+    PANEL = "#2B2B2B"
+    ENTRY = "#353535"
+    BUTTON = "#404040"
+    FG = "#FFFFFF"
+
     def __init__(self):
+
         self.root = tk.Tk()
-        self.root.title(LIGHT_NAME)
-        self.root.geometry("800x600")
-        self.root.configure(bg=BG)
+
+        self.root.title(
+            self.LIGHT_NAME
+        )
+
+        self.root.geometry(
+            "800x600"
+        )
+
+        self.root.configure(
+            bg=self.BG
+        )
 
         self.socket = None
         self.connected = False
@@ -30,185 +40,588 @@ class VirtualLightApp:
         self.target_universe = 0
         self.start_address = 1
 
-        self.latest_rgb = (0,0,0)
-        self.rgb_lock = threading.Lock()
-        self.current_color = "#000000"
+        self.latest_data = []
+        self.data_lock = threading.Lock()
 
         self.setup_theme()
         self.create_widgets()
+        self.output_canvas = tk.Canvas(
+            self.root, 
+            bg = "#000000", 
+            highlightthickness = 0, 
+            bd = 0
+        )
 
-        self.root.bind("<F11>", self.toggle_fullscreen)
-        self.root.bind("<Escape>", self.exit_fullscreen)
-        self.root.protocol("WM_DELETE_WINDOW", self.close)
+        self.root.bind(
+            "<F11>",
+            self.toggle_fullscreen
+        )
+
+        self.root.bind(
+            "<Escape>",
+            self.exit_fullscreen
+        )
+
+        self.root.protocol(
+            "WM_DELETE_WINDOW",
+            self.close
+        )
 
         self.process_latest_data()
 
+    # --------------------------------------------------
+    # Theme
+    # --------------------------------------------------
+
     def setup_theme(self):
+
         style = ttk.Style()
+
         style.theme_use("clam")
-        style.configure("TNotebook", background=BG, borderwidth=0)
-        style.configure("TNotebook.Tab", background=PANEL, foreground=FG, padding=(15,8))
-        style.map("TNotebook.Tab", background=[("selected", "#505050")])
+
+        style.configure(
+            "TNotebook",
+            background=self.BG, 
+            borderwidth = 0
+        )
+
+        style.configure(
+            "TNotebook.Tab",
+            borderwidth = 0
+        )
+
+        style.layout(
+            "TNotebook", 
+            [
+                (
+                    "Notebook.client", 
+                    {"sticky":"nswe"}
+                )
+            ]
+        )
+
+    # --------------------------------------------------
+    # GUI
+    # --------------------------------------------------
 
     def create_widgets(self):
-        self.notebook = ttk.Notebook(self.root)
-        self.notebook.pack(fill="both", expand=True)
 
-        self.light_tab = tk.Frame(self.notebook, bg="#000000")
-        self.settings_tab = tk.Frame(self.notebook, bg=BG)
+        self.notebook = ttk.Notebook(
+            self.root
+        )
 
-        self.notebook.add(self.light_tab, text="Light")
-        self.notebook.add(self.settings_tab, text="Settings")
+        self.notebook.configure(
+            padding = 0
+        )
 
-        self.light_area = tk.Frame(self.light_tab, bg="#000000")
-        self.light_area.pack(fill=tk.BOTH, expand=True)
+        self.notebook.pack(
+            fill="both",
+            expand=True
+        )
 
-        frame = tk.Frame(self.settings_tab, bg=BG, padx=20, pady=20)
+        self.light_tab = tk.Frame(
+            self.notebook,
+            bg="black"
+        )
+
+        self.settings_tab = tk.Frame(
+            self.notebook,
+            bg=self.BG
+        )
+
+        self.notebook.add(
+            self.light_tab,
+            text="Light"
+        )
+
+        self.notebook.add(
+            self.settings_tab,
+            text="Settings"
+        )
+
+        #
+        # Light Tab
+        #
+
+        self.preview_canvas = tk.Canvas(
+            self.light_tab,
+            bg="#000000", 
+            highlightthickness = 0, 
+            bd = 0
+        )
+
+        self.preview_canvas.pack(
+            fill=tk.BOTH,
+            expand=True
+        )
+
+        #
+        # Settings Tab
+        #
+
+        frame = tk.Frame(
+            self.settings_tab,
+            bg=self.BG,
+            padx=20,
+            pady=20
+        )
+
         frame.pack(anchor="nw")
 
-        labels = ["Host","Port","Universe","Address"]
-        self.host_entry = self.make_entry(frame)
-        self.port_entry = self.make_entry(frame)
-        self.universe_entry = self.make_entry(frame)
-        self.address_entry = self.make_entry(frame)
+        self.host_entry = self.add_setting(
+            frame,
+            0,
+            "Host",
+            "127.0.0.1"
+        )
 
-        self.host_entry.insert(0,"127.0.0.1")
-        self.port_entry.insert(0,"9000")
-        self.universe_entry.insert(0,"0")
-        self.address_entry.insert(0,"1")
+        self.port_entry = self.add_setting(
+            frame,
+            1,
+            "Port",
+            "9000"
+        )
 
-        entries=[self.host_entry,self.port_entry,self.universe_entry,self.address_entry]
-        for r,(lbl,e) in enumerate(zip(labels,entries)):
-            tk.Label(frame,text=lbl,bg=BG,fg=FG).grid(row=r,column=0,sticky="w")
-            e.grid(row=r,column=1,padx=10,pady=5)
+        self.universe_entry = self.add_setting(
+            frame,
+            2,
+            "Universe",
+            "0"
+        )
 
-        tk.Label(frame,text="Status",bg=BG,fg=FG).grid(row=4,column=0,sticky="w")
-        self.status_var=tk.StringVar(value="Disconnected")
-        self.status_label=tk.Label(frame,textvariable=self.status_var,bg=BG,fg=DISCONNECTED_COLOR)
-        self.status_label.grid(row=4,column=1,sticky="w")
+        self.address_entry = self.add_setting(
+            frame,
+            3,
+            "Address",
+            "1"
+        )
 
-        buttons=tk.Frame(frame,bg=BG)
-        buttons.grid(row=5,column=0,columnspan=2,pady=20)
-        self.make_button(buttons,"Connect",self.connect).pack(side=tk.LEFT,padx=5)
-        self.make_button(buttons,"Disconnect",self.disconnect).pack(side=tk.LEFT,padx=5)
-        self.make_button(buttons,"Apply",self.apply_settings).pack(side=tk.LEFT,padx=5)
+        tk.Label(
+            frame,
+            text="Status",
+            bg=self.BG,
+            fg=self.FG
+        ).grid(
+            row=4,
+            column=0,
+            sticky="w"
+        )
 
-    def make_entry(self,parent):
-        return tk.Entry(parent,width=24,bg=ENTRY,fg=FG,insertbackground=FG,relief=tk.FLAT)
+        self.status_var = tk.StringVar(
+            value="Disconnected"
+        )
 
-    def make_button(self,parent,text,command):
-        return tk.Button(parent,text=text,command=command,bg=BUTTON,fg=FG,activebackground="#606060",activeforeground=FG,width=12,relief=tk.FLAT)
+        self.status_label = tk.Label(
+            frame,
+            textvariable=self.status_var,
+            bg=self.BG,
+            fg="#FF5555"
+        )
+
+        self.status_label.grid(
+            row=4,
+            column=1,
+            sticky="w"
+        )
+
+        buttons = tk.Frame(
+            frame,
+            bg=self.BG
+        )
+
+        buttons.grid(
+            row=5,
+            column=0,
+            columnspan=2,
+            pady=20
+        )
+
+        tk.Button(
+            buttons,
+            text="Connect",
+            command=self.connect
+        ).pack(
+            side=tk.LEFT,
+            padx=5
+        )
+
+        tk.Button(
+            buttons,
+            text="Disconnect",
+            command=self.disconnect
+        ).pack(
+            side=tk.LEFT,
+            padx=5
+        )
+
+        tk.Button(
+            buttons,
+            text="Apply",
+            command=self.apply_settings
+        ).pack(
+            side=tk.LEFT,
+            padx=5
+        )
+
+    def add_setting(
+        self,
+        parent,
+        row,
+        label,
+        default
+        ):
+
+        tk.Label(
+            parent,
+            text=label,
+            bg=self.BG,
+            fg=self.FG
+        ).grid(
+            row=row,
+            column=0,
+            sticky="w"
+        )
+
+        entry = tk.Entry(
+            parent,
+            width=24,
+            bg=self.ENTRY,
+            fg=self.FG,
+            insertbackground=self.FG
+        )
+
+        entry.insert(
+            0,
+            default
+        )
+
+        entry.grid(
+            row=row,
+            column=1,
+            padx=10,
+            pady=5
+        )
+
+        return entry
+
+    # --------------------------------------------------
+    # DMX
+    # --------------------------------------------------
 
     def connect(self):
+
         if self.connected:
             return
+
+        if not self.apply_settings():
+            return
+        
         try:
-            host=self.host_entry.get().strip()
-            port=int(self.port_entry.get())
-            self.socket=socket.create_connection((host,port),timeout=5)
-            self.connected=True
-            self.status_var.set("Connected")
-            self.status_label.configure(fg=CONNECTED_COLOR)
-            threading.Thread(target=self.receive_loop,daemon=True).start()
+
+            host = (
+                self.host_entry.get()
+            )
+
+            port = int(
+                self.port_entry.get()
+            )
+
+            self.socket = socket.create_connection(
+                (host, port),
+                timeout=5
+            )
+
+            self.connected = True
+
+            self.status_var.set(
+                "Connected"
+            )
+
+            self.status_label.configure(
+                fg="#00FF66"
+            )
+
+            threading.Thread(
+                target=self.receive_loop,
+                daemon=True
+            ).start()
+
             self.send_subscribe()
+
         except Exception as ex:
-            messagebox.showerror("Connection Error",str(ex))
+
+            messagebox.showerror(
+                "Connection Error",
+                str(ex)
+            )
 
     def disconnect(self):
-        self.connected=False
+
+        self.connected = False
+
         try:
+
             if self.socket:
                 self.socket.close()
+
         except Exception:
             pass
-        self.socket=None
-        self.status_var.set("Disconnected")
-        self.status_label.configure(fg=DISCONNECTED_COLOR)
+
+        self.socket = None
+
+        self.status_var.set(
+            "Disconnected"
+        )
+
+        self.status_label.configure(
+            fg="#FF5555"
+        )
 
     def apply_settings(self):
+
         try:
-            universe=int(self.universe_entry.get())
-            address=int(self.address_entry.get())
+            universe = int(self.universe_entry.get())
+            address = int(self.address_entry.get())
         except ValueError:
-            messagebox.showerror("Error","Universe / Address must be numeric")
-            return
+            messagebox.showerror(
+                "Input Error", 
+                "Universe and Address must be integers."
+            )
+
+            return False
+        
         if not 0 <= universe <= 255:
-            messagebox.showerror("Error","Universe must be 0-255")
-            return
-        if not 1 <= address <= 510:
-            messagebox.showerror("Error","Address must be 1-510")
-            return
-        self.target_universe=universe
-        self.start_address=address
+            messagebox.showerror(
+                "Input Error", 
+                "Universe must be between 0 and 255."
+            )
+            return False
+
+        if not 1 <= address <= 512:
+            messagebox.showerror(
+                "Input Error", 
+                "Address must be between 1 and 512."
+            )
+            return False
+        
+        if address + self.CHANNEL_COUNT - 1 > 512:
+            messagebox.showerror(
+                "Input Error", 
+                "Channel range exeeds 512."
+            )
+            return False
+
+        self.target_universe = universe
+        self.start_address = address
+
         if self.connected:
             self.send_subscribe()
+        
+        return True
 
     def send_subscribe(self):
+
         if not self.connected:
             return
-        msg={"type":"subscribe","universe":self.target_universe,"start":self.start_address,"length":CHANNEL_COUNT}
-        self.socket.sendall((json.dumps(msg)+"\n").encode())
+
+        msg = {
+            "type": "subscribe",
+            "universe": self.target_universe,
+            "start": self.start_address,
+            "length": self.CHANNEL_COUNT
+        }
+
+        self.socket.sendall(
+            (
+                json.dumps(msg)
+                + "\n"
+            ).encode()
+        )
 
     def receive_loop(self):
+
         try:
-            fp=self.socket.makefile("r")
+
+            fp = self.socket.makefile("r")
+
             for line in fp:
-                if not self.connected:
-                    break
+
                 try:
-                    msg=json.loads(line.strip())
-                except Exception:
+                    msg = json.loads(
+                        line.strip()
+                    )
+                except json.JSONDecodeError:
                     continue
-                if msg.get("type")!="dmx":
+
+                if msg.get("type") != "dmx":
                     continue
-                data=msg.get("data",[])
-                if len(data)<3:
-                    continue
-                with self.rgb_lock:
-                    self.latest_rgb=(int(data[0]),int(data[1]),int(data[2]))
+
+                with self.data_lock:
+
+                    self.latest_data = (
+                        msg.get(
+                            "data",
+                            []
+                        )
+                    )
+
         except Exception:
             pass
-        self.root.after(0,self.disconnect)
+
+        self.root.after(
+            0,
+            self.disconnect
+        )
+
+    # --------------------------------------------------
+    # Light Processing
+    # --------------------------------------------------
 
     def process_latest_data(self):
-        with self.rgb_lock:
-            r,g,b=self.latest_rgb
-        color=f"#{r:02x}{g:02x}{b:02x}"
-        if color!=self.current_color:
-            self.current_color=color
-            self.light_area.configure(bg=color)
+
+        data = None
+
+        with self.data_lock:
+
+            if self.latest_data:
+                data = self.latest_data
+
+        if data:
+
+            self.preview_canvas.delete("all")
+            self.process_channels(
+                data, 
+                self.preview_canvas
+            )
+            if self.fullscreen:
+                self.output_canvas.delete("all")
+                self.process_channels(
+                    data, 
+                    self.output_canvas
+                )
+
+
         if self.running:
-            self.root.after(16,self.process_latest_data)
 
-    def toggle_fullscreen(self,event=None):
-        current=self.notebook.select()
-        if current!=str(self.light_tab):
-            return
-        self.fullscreen=not self.fullscreen
+            self.root.after(
+                16,
+                self.process_latest_data
+            )
+
+    def process_channels(
+        self,
+        data, 
+        canvas
+        ):
+        """
+        灯体ごとの処理を書く
+
+        data[0]
+        data[1]
+        ...
+        """
+        pass
+
+    # --------------------------------------------------
+    # Fullscreen
+    # --------------------------------------------------
+
+    def toggle_fullscreen(
+        self,
+        event=None
+        ):
+
         if self.fullscreen:
-            self.root.update_idletasks()
-            w=self.root.winfo_screenwidth()
-            h=self.root.winfo_screenheight()
-            self.root.overrideredirect(True)
-            self.root.geometry(f"{w}x{h}+0+0")
-        else:
-            self.exit_fullscreen()
+            return
+        
+        self.fullscreen = True
 
-    def exit_fullscreen(self,event=None):
+        self.notebook.pack_forget()
+        self.output_canvas.pack(
+            fill = tk.BOTH, 
+            expand = True
+        )
+
+
+        self.root.overrideredirect(True)
+
+        width = self.root.winfo_screenwidth()
+        height = self.root.winfo_screenheight()
+
+        self.root.geometry(
+            f"{width}x{height}+0+0"
+        )
+
+    def exit_fullscreen(
+        self,
+        event=None
+        ):
         if not self.fullscreen:
             return
-        self.fullscreen=False
+        
+        self.fullscreen = False
+
+        self.output_canvas.pack_forget()
+
+        self.notebook.pack(
+            fill = "both", 
+            expand = True
+        )
+
         self.root.overrideredirect(False)
-        self.root.geometry("800x600")
+
+        self.root.geometry(
+            "800x600"
+        )
+
+    # --------------------------------------------------
+    # Close
+    # --------------------------------------------------
 
     def close(self):
-        self.running=False
+
+        self.running = False
+
         self.exit_fullscreen()
+
         self.disconnect()
+
         self.root.destroy()
 
     def run(self):
         self.root.mainloop()
 
-if __name__=="__main__":
-    VirtualLightApp().run()
+
+class Light(
+    VirtualLightBase
+    ):
+    LIGHT_NAME = "light name"
+    CHANNEL_COUNT = 3
+
+    def process_channels(
+        self, data, canvas
+        ):
+        if len(data) < self.CHANNEL_COUNT:
+            return
+        
+        # ここから灯体の動作
+        r = data[0]
+        g = data[1]
+        b = data[2]
+        color = f"#{r:02x}{g:02x}{b:02x}"
+
+        w = canvas.winfo_width()
+        h = canvas.winfo_height()
+
+        canvas.create_rectangle(
+            0, 0, w, h, 
+            fill = color, 
+            outline = ""
+        )
+        # ここまで灯体の動作
+
+
+
+if __name__ == "__main__":
+    app = Light()
+    app.run()
