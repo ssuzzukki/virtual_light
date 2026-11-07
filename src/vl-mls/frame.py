@@ -10,12 +10,10 @@ class VirtualLightBase:
     LIGHT_NAME = "Virtual Light"
     CHANNEL_COUNT = 1
 
-    BG = "#202020" #ok
-    #PANEL = "#2B2B2B"
-    PANEL = "#ff0000"
-    ENTRY = "#353535" #ok
-    #BUTTON = "#404040"
-    BUTTON = "#00ff00"
+    BG = "#202020"
+    PANEL = "#2B2B2B"
+    ENTRY = "#353535"
+    BUTTON = "#404040"
     FG = "#FFFFFF"
 
     def __init__(self):
@@ -47,6 +45,12 @@ class VirtualLightBase:
 
         self.setup_theme()
         self.create_widgets()
+        self.output_canvas = tk.Canvas(
+            self.root, 
+            bg = "#000000", 
+            highlightthickness = 0, 
+            bd = 0
+        )
 
         self.root.bind(
             "<F11>",
@@ -77,14 +81,23 @@ class VirtualLightBase:
 
         style.configure(
             "TNotebook",
-            background=self.BG
+            background=self.BG, 
+            borderwidth = 0
         )
 
         style.configure(
             "TNotebook.Tab",
-            background=self.PANEL,
-            foreground=self.FG,
-            padding=(15, 8)
+            borderwidth = 0
+        )
+
+        style.layout(
+            "TNotebook", 
+            [
+                (
+                    "Notebook.client", 
+                    {"sticky":"nswe"}
+                )
+            ]
         )
 
     # --------------------------------------------------
@@ -95,6 +108,10 @@ class VirtualLightBase:
 
         self.notebook = ttk.Notebook(
             self.root
+        )
+
+        self.notebook.configure(
+            padding = 0
         )
 
         self.notebook.pack(
@@ -126,13 +143,14 @@ class VirtualLightBase:
         # Light Tab
         #
 
-        self.light_area = tk.Frame(
+        self.preview_canvas = tk.Canvas(
             self.light_tab,
-            bg="black"
+            bg="#000000", 
+            highlightthickness = 0, 
+            bd = 0
         )
-        self.fullscreen_frame = None
 
-        self.light_area.pack(
+        self.preview_canvas.pack(
             fill=tk.BOTH,
             expand=True
         )
@@ -295,6 +313,9 @@ class VirtualLightBase:
         if self.connected:
             return
 
+        if not self.apply_settings():
+            return
+        
         try:
 
             host = (
@@ -358,16 +379,45 @@ class VirtualLightBase:
 
     def apply_settings(self):
 
-        self.target_universe = int(
-            self.universe_entry.get()
-        )
+        try:
+            universe = int(self.universe_entry.get())
+            address = int(self.address_entry.get())
+        except ValueError:
+            messagebox.showerror(
+                "Input Error", 
+                "Universe and Address must be integers."
+            )
 
-        self.start_address = int(
-            self.address_entry.get()
-        )
+            return False
+        
+        if not 0 <= universe <= 255:
+            messagebox.showerror(
+                "Input Error", 
+                "Universe must be between 0 and 255."
+            )
+            return False
+
+        if not 1 <= address <= 512:
+            messagebox.showerror(
+                "Input Error", 
+                "Address must be between 1 and 512."
+            )
+            return False
+        
+        if address + self.CHANNEL_COUNT - 1 > 512:
+            messagebox.showerror(
+                "Input Error", 
+                "Channel range exeeds 512."
+            )
+            return False
+
+        self.target_universe = universe
+        self.start_address = address
 
         if self.connected:
             self.send_subscribe()
+        
+        return True
 
     def send_subscribe(self):
 
@@ -396,9 +446,12 @@ class VirtualLightBase:
 
             for line in fp:
 
-                msg = json.loads(
-                    line.strip()
-                )
+                try:
+                    msg = json.loads(
+                        line.strip()
+                    )
+                except json.JSONDecodeError:
+                    continue
 
                 if msg.get("type") != "dmx":
                     continue
@@ -435,9 +488,18 @@ class VirtualLightBase:
 
         if data:
 
+            self.preview_canvas.delete("all")
             self.process_channels(
-                data
+                data, 
+                self.preview_canvas
             )
+            if self.fullscreen:
+                self.output_canvas.delete("all")
+                self.process_channels(
+                    data, 
+                    self.output_canvas
+                )
+
 
         if self.running:
 
@@ -448,7 +510,8 @@ class VirtualLightBase:
 
     def process_channels(
         self,
-        data
+        data, 
+        canvas
         ):
         """
         灯体ごとの処理を書く
@@ -474,17 +537,11 @@ class VirtualLightBase:
         self.fullscreen = True
 
         self.notebook.pack_forget()
-
-        self.fullscreen_frame = tk.Frame(
-            self.root, 
-            bg = self.light_area.cget("bg")
-        )
-
-        self.fullscreen_frame.pack(
+        self.output_canvas.pack(
             fill = tk.BOTH, 
             expand = True
-
         )
+
 
         self.root.overrideredirect(True)
 
@@ -504,9 +561,7 @@ class VirtualLightBase:
         
         self.fullscreen = False
 
-        if self.fullscreen_frame:
-            self.fullscreen_frame.destroy()
-            self.fullscreen_frame = None
+        self.output_canvas.pack_forget()
 
         self.notebook.pack(
             fill = "both", 
@@ -527,6 +582,8 @@ class VirtualLightBase:
 
         self.running = False
 
+        self.exit_fullscreen()
+
         self.disconnect()
 
         self.root.destroy()
@@ -539,23 +596,30 @@ class Light(
     VirtualLightBase
     ):
     LIGHT_NAME = "light name"
-    CHANNEL_COUNT = 1
+    CHANNEL_COUNT = 3
 
     def process_channels(
-        self, data
-    ):
+        self, data, canvas
+        ):
         if len(data) < self.CHANNEL_COUNT:
             return
         
-        r = 0
-        g = 0
-        b = 0
+        # ここから灯体の動作
+        r = data[0]
+        g = data[1]
+        b = data[2]
         color = f"#{r:02x}{g:02x}{b:02x}"
 
-        self.light_area.configure(bg = color)
-        
-        if self.fullscreen_frame:
-            self.fullscreen_frame.configure(bg = color)
+        w = canvas.winfo_width()
+        h = canvas.winfo_height()
+
+        canvas.create_rectangle(
+            0, 0, w, h, 
+            fill = color, 
+            outline = ""
+        )
+        # ここまで灯体の動作
+
 
 
 if __name__ == "__main__":
