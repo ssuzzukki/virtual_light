@@ -595,7 +595,7 @@ class VirtualLightBase:
 class Light(
     VirtualLightBase
     ):
-    LIGHT_NAME = "light name"
+    LIGHT_NAME = "vl-mls-02 RGB PAR"
     CHANNEL_COUNT = 3
 
     def process_channels(

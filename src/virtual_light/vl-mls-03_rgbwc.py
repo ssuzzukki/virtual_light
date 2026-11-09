@@ -595,7 +595,7 @@ class VirtualLightBase:
 class Light(
     VirtualLightBase
     ):
-    LIGHT_NAME = "light name"
+    LIGHT_NAME = "vl-mls-03 RGBWC"
     CHANNEL_COUNT = 5
 
     def filter(self, color, ww, cw, wcolor, ccolor):

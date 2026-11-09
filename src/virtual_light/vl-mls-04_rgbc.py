@@ -596,7 +596,7 @@ class VirtualLightBase:
 class Light(
     VirtualLightBase
     ):
-    LIGHT_NAME = "light name"
+    LIGHT_NAME = "vl-mls-04 RGBCT"
     CHANNEL_COUNT = 4
 
     def k2rgbfilter(self, k):
